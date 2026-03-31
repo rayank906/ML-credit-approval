@@ -15,3 +15,4 @@ Container based architecture:
 3. ML container pulls from the Redis queue, processes job, sends result back to db. maybe RAG is also done here
 
 4. someone can use the job-id to GET /job and get the results
+
