@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from flask import Flask, jsonify, render_template, request
 
+from credit_score import compute_credit_score
 app = Flask(__name__)
 
 MODEL_PATH = "credit_approval_model.joblib"
@@ -21,6 +22,7 @@ FEATURE_ORDER = [
     "NAME_FAMILY_STATUS", "NAME_HOUSING_TYPE", "OCCUPATION_TYPE",
     "FLAG_WORK_PHONE", "FLAG_PHONE", "FLAG_EMAIL", "CNT_FAM_MEMBERS",
     "AGE_YEARS", "YEARS_EMPLOYED",
+    "CREDIT_SCORE",
 ]
 
 INCOME_TYPES = {
@@ -96,6 +98,7 @@ FEATURE_LABELS = {
     "CNT_FAM_MEMBERS": "Family Members",
     "AGE_YEARS": "Age",
     "YEARS_EMPLOYED": "Years Employed",
+    "CREDIT_SCORE": "Credit Score",
 }
 
 
@@ -122,6 +125,16 @@ def get_decision_strength(prob_unsafe: float) -> dict:
     else:
         return {"label": "Strong Rejection", "color": "#991b1b", "emoji": "x",
                 "description": "Very high risk — strong candidate for rejection."}
+
+
+def blend_risk(prob_unsafe: float, credit_score: int, weight_credit_score: float = 0.65) -> float:
+    """
+    Blend model risk with credit score. Higher credit score -> lower blended risk.
+    weight_credit_score is the share of the decision driven by the credit score.
+    """
+    credit_norm = (credit_score - 300) / 550  # 300-850 -> 0-1
+    credit_norm = max(0.0, min(1.0, credit_norm))
+    return (weight_credit_score * (1 - credit_norm)) + ((1 - weight_credit_score) * prob_unsafe)
 
 
 def get_top_reasons(feature_values: dict, prob_unsafe: float) -> list:
@@ -176,6 +189,8 @@ def _human_readable_value(feat_name: str, val) -> str:
         return f"{val:.1f} years"
     if feat_name == "YEARS_EMPLOYED":
         return f"{val:.1f} years"
+    if feat_name == "CREDIT_SCORE":
+        return f"{int(val)}"
     return str(val)
 
 
@@ -217,18 +232,23 @@ def predict():
     except (KeyError, ValueError) as e:
         return jsonify({"error": f"Invalid input: {e}"}), 400
 
+    credit_score = compute_credit_score(features)
+    features["CREDIT_SCORE"] = credit_score
     X = pd.DataFrame([features], columns=FEATURE_ORDER)
     prob_unsafe = float(model.predict_proba(X)[:, 1][0])
+    blended_prob_unsafe = blend_risk(prob_unsafe, credit_score)
     prediction = int(model.predict(X)[0])
-    decision = "Rejected" if prediction == 1 else "Approved"
+    decision = "Rejected" if blended_prob_unsafe >= 0.4 else "Approved"
 
-    strength = get_decision_strength(prob_unsafe)
+    strength = get_decision_strength(blended_prob_unsafe)
     reasons = get_top_reasons(features, prob_unsafe)
 
     return jsonify({
         "decision": decision,
-        "probability_risky": round(prob_unsafe * 100, 1),
-        "probability_safe": round((1 - prob_unsafe) * 100, 1),
+        "credit_score": int(credit_score),
+        "probability_risky": round(blended_prob_unsafe * 100, 1),
+        "probability_safe": round((1 - blended_prob_unsafe) * 100, 1),
+        "model_probability_risky": round(prob_unsafe * 100, 1),
         "strength": strength,
         "top_factors": reasons,
     })

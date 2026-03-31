@@ -9,6 +9,7 @@ from imblearn.over_sampling import SMOTE
 from imblearn.pipeline import Pipeline as ImbPipeline
 import joblib
 
+from credit_score import add_credit_score_column
 
 LEAKY_CREDIT_HISTORY_COLS = [
     # These are computed from the same credit STATUS history used to define TARGET in cleaning.py,
@@ -22,6 +23,7 @@ LEAKY_CREDIT_HISTORY_COLS = [
 
 def load_data(path: str = "ml_ready_dataset.csv", drop_leaky_cols: bool = True):
     df = pd.read_csv(path)
+    df = add_credit_score_column(df)
     drop_cols = ["TARGET", "ID"]
     if drop_leaky_cols:
         drop_cols.extend([c for c in LEAKY_CREDIT_HISTORY_COLS if c in df.columns])
@@ -135,16 +137,34 @@ def train_and_evaluate():
     print("Saved test predictions to test_predictions.csv")
 
 
+def _blend_risk(prob_unsafe: float, credit_score: int, weight_credit_score: float = 0.65) -> float:
+    """
+    Blend model risk with credit score. Higher credit score -> lower blended risk.
+    weight_credit_score is the share of the decision driven by the credit score.
+    """
+    credit_norm = (credit_score - 300) / 550  # 300-850 -> 0-1
+    credit_norm = max(0.0, min(1.0, credit_norm))
+    return (weight_credit_score * (1 - credit_norm)) + ((1 - weight_credit_score) * prob_unsafe)
+
+
 def predict_single(applicant_features: dict, model_path: str = "credit_approval_model.joblib"):
     model = joblib.load(model_path)
     # Ensure the input dict has all feature columns except ID and TARGET
-    X = pd.DataFrame([applicant_features])
+    from credit_score import compute_credit_score
+
+    credit_score = compute_credit_score(applicant_features)
+    features_with_score = dict(applicant_features)
+    features_with_score["CREDIT_SCORE"] = credit_score
+    X = pd.DataFrame([features_with_score])
     proba_unsafe = model.predict_proba(X)[:, 1]
     prediction = model.predict(X)[0]
+    blended_prob_unsafe = _blend_risk(float(proba_unsafe[0]), credit_score)
     # Assuming TARGET=1 means unsafe / should reject
-    decision = "reject" if prediction == 1 else "approve"
+    decision = "reject" if blended_prob_unsafe >= 0.4 else "approve"
     return {
+        "credit_score": credit_score,
         "prob_unsafe": float(proba_unsafe[0]),
+        "prob_unsafe_blended": float(blended_prob_unsafe),
         "prediction": int(prediction),
         "decision": decision,
     }
@@ -152,4 +172,3 @@ def predict_single(applicant_features: dict, model_path: str = "credit_approval_
 
 if __name__ == "__main__":
     train_and_evaluate()
-
