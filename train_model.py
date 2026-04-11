@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pandas as pd
 from sklearn.metrics import classification_report, roc_auc_score, accuracy_score
 from sklearn.preprocessing import StandardScaler
@@ -11,6 +13,13 @@ import joblib
 
 from credit_score import add_credit_score_column
 
+_REPO_ROOT = Path(__file__).resolve().parent
+_DATA_DIR = _REPO_ROOT / "data"
+_MODEL_DIR = _REPO_ROOT / "model"
+_DEFAULT_DATASET = _DATA_DIR / "ml_ready_dataset.csv"
+_DEFAULT_MODEL = _MODEL_DIR / "credit_approval_model.joblib"
+_DEFAULT_TEST_PRED = _DATA_DIR / "test_predictions.csv"
+
 LEAKY_CREDIT_HISTORY_COLS = [
     # These are computed from the same credit STATUS history used to define TARGET in cleaning.py,
     # so including them makes the task trivial (label leakage) and can produce ~100% accuracy.
@@ -21,7 +30,8 @@ LEAKY_CREDIT_HISTORY_COLS = [
 ]
 
 
-def load_data(path: str = "ml_ready_dataset.csv", drop_leaky_cols: bool = True):
+def load_data(path: str | Path | None = None, drop_leaky_cols: bool = True):
+    path = Path(path) if path is not None else _DEFAULT_DATASET
     df = pd.read_csv(path)
     df = add_credit_score_column(df)
     drop_cols = ["TARGET", "ID"]
@@ -124,8 +134,9 @@ def train_and_evaluate():
     best_acc = accuracy_score(y_test, best_y_pred)
     print(f"Best model Accuracy (compare 0/1 PRED to TARGET): {best_acc:.4f}")
 
-    joblib.dump(best_model, "credit_approval_model.joblib")
-    print("Saved best model to credit_approval_model.joblib")
+    _MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    joblib.dump(best_model, _DEFAULT_MODEL)
+    print(f"Saved best model to {_DEFAULT_MODEL}")
 
     pd.DataFrame(
         {
@@ -133,8 +144,8 @@ def train_and_evaluate():
             "PRED": pd.Series(best_y_pred).reset_index(drop=True),
             "PROB_UNSAFE": pd.Series(best_y_proba).reset_index(drop=True),
         }
-    ).to_csv("test_predictions.csv", index=False)
-    print("Saved test predictions to test_predictions.csv")
+    ).to_csv(_DEFAULT_TEST_PRED, index=False)
+    print(f"Saved test predictions to {_DEFAULT_TEST_PRED}")
 
 
 def _blend_risk(prob_unsafe: float, credit_score: int, weight_credit_score: float = 0.65) -> float:
@@ -147,8 +158,12 @@ def _blend_risk(prob_unsafe: float, credit_score: int, weight_credit_score: floa
     return (weight_credit_score * (1 - credit_norm)) + ((1 - weight_credit_score) * prob_unsafe)
 
 
-def predict_single(applicant_features: dict, model_path: str = "credit_approval_model.joblib"):
-    model = joblib.load(model_path)
+def predict_single(
+    applicant_features: dict,
+    model_path: str | Path | None = None,
+):
+    path = Path(model_path) if model_path is not None else _DEFAULT_MODEL
+    model = joblib.load(path)
     # Ensure the input dict has all feature columns except ID and TARGET
     from credit_score import compute_credit_score
 

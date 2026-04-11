@@ -1,9 +1,23 @@
-import pandas as pd
-import numpy as np
+from pathlib import Path
 
-#load data
-app = pd.read_csv("application_record.csv")
-credit = pd.read_csv("credit_record.csv")
+import numpy as np
+import pandas as pd
+
+_REPO_ROOT = Path(__file__).resolve().parent
+_DATA_DIR = _REPO_ROOT / "data"
+_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _resolve_csv(name: str) -> Path:
+    in_data = _DATA_DIR / name
+    if in_data.exists():
+        return in_data
+    return _REPO_ROOT / name
+
+
+# load data (prefer `data/` when present)
+app = pd.read_csv(_resolve_csv("application_record.csv"))
+credit = pd.read_csv(_resolve_csv("credit_record.csv"))
 
 
 #fade duplicates fr
@@ -132,13 +146,9 @@ credit_agg['TARGET'] = (credit_agg['max_dpd'] >= 2).astype(int)
 #merge the 2 files
 df = app.merge(credit_agg, on='ID', how='inner')
 
-#save outputs
-
-# Save the cleaned application-only file (all applicants)
-app.to_csv("cleaned_application_record.csv", index=False)
-
-# Save the final ML-ready merged dataset
-df.to_csv("ml_ready_dataset.csv", index=False)
+# save outputs under data/
+app.to_csv(_DATA_DIR / "cleaned_application_record.csv", index=False)
+df.to_csv(_DATA_DIR / "ml_ready_dataset.csv", index=False)
 
 print(f"Cleaned application records: {len(app)} rows, {len(app.columns)} cols")
 print(f"ML-ready dataset (merged):   {len(df)} rows, {len(df.columns)} cols")
