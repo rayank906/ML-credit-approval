@@ -1,7 +1,18 @@
+from pathlib import Path
+
 import pandas as pd
 
-application_df = pd.read_csv("application_record.csv", header=0)
-credit_df = pd.read_csv("credit_record.csv", header=0)
+_REPO = Path(__file__).resolve().parent
+_DATA = _REPO / "data"
+
+
+def _csv(name: str) -> Path:
+    p = _DATA / name
+    return p if p.exists() else _REPO / name
+
+
+application_df = pd.read_csv(_csv("application_record.csv"), header=0)
+credit_df = pd.read_csv(_csv("credit_record.csv"), header=0)
 
 joined_df = application_df.merge(credit_df, on="ID", how="inner")
 
@@ -18,4 +29,5 @@ joined_df = joined_df.assign(STATUS_NUMERIC=joined_df["STATUS"].apply(status_to_
 
 dropped_df = joined_df.drop(columns=["STATUS"])
 
-dropped_df.to_csv("joined_no_status.csv", index=False)
+_DATA.mkdir(parents=True, exist_ok=True)
+dropped_df.to_csv(_DATA / "joined_no_status.csv", index=False)
