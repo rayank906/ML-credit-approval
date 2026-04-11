@@ -1,4 +1,153 @@
+// ── Auth State ────────────────────────────────────────────────
+let authToken = localStorage.getItem("authToken");
+let authUser = JSON.parse(localStorage.getItem("authUser") || "null");
+
+function updateAuthUI() {
+    const bar = document.getElementById("auth-bar");
+    if (authUser) {
+        bar.innerHTML = `
+            <span class="user-info">Signed in as <strong>${authUser.full_name}</strong></span>
+            <button class="auth-btn small" onclick="logout()">Log Out</button>
+        `;
+        loadHistory();
+    } else {
+        bar.innerHTML = `
+            <button class="auth-btn" onclick="openModal('login')">Log In</button>
+            <button class="auth-btn primary" onclick="openModal('register')">Sign Up</button>
+        `;
+        const hist = document.getElementById("history-section");
+        if (hist) hist.remove();
+    }
+}
+
+function openModal(mode) {
+    document.getElementById("auth-modal").classList.add("active");
+    switchModal(mode);
+}
+
+function closeModal() {
+    document.getElementById("auth-modal").classList.remove("active");
+    document.querySelectorAll(".auth-error").forEach(e => { e.classList.remove("visible"); e.textContent = ""; });
+}
+
+function switchModal(mode) {
+    document.getElementById("login-form").style.display = mode === "login" ? "block" : "none";
+    document.getElementById("register-form").style.display = mode === "register" ? "block" : "none";
+    document.querySelectorAll(".auth-error").forEach(e => { e.classList.remove("visible"); e.textContent = ""; });
+}
+
+function showAuthError(formId, msg) {
+    const el = document.getElementById(formId);
+    el.textContent = msg;
+    el.classList.add("visible");
+}
+
+async function handleLogin() {
+    const email = document.getElementById("login-email").value.trim();
+    const password = document.getElementById("login-password").value;
+    if (!email || !password) { showAuthError("login-error", "Please fill in all fields."); return; }
+
+    try {
+        const resp = await fetch("/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email, password }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || "Login failed");
+
+        authToken = data.token;
+        authUser = { email: data.email, full_name: data.full_name, role: data.role };
+        localStorage.setItem("authToken", authToken);
+        localStorage.setItem("authUser", JSON.stringify(authUser));
+        closeModal();
+        updateAuthUI();
+    } catch (err) {
+        showAuthError("login-error", err.message);
+    }
+}
+
+async function handleRegister() {
+    const full_name = document.getElementById("register-name").value.trim();
+    const email = document.getElementById("register-email").value.trim();
+    const password = document.getElementById("register-password").value;
+    if (!full_name || !email || !password) { showAuthError("register-error", "Please fill in all fields."); return; }
+    if (password.length < 6) { showAuthError("register-error", "Password must be at least 6 characters."); return; }
+
+    try {
+        const resp = await fetch("/auth/register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email, password, full_name }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || "Registration failed");
+
+        authToken = data.token;
+        authUser = { email: data.email, full_name: data.full_name, role: data.role };
+        localStorage.setItem("authToken", authToken);
+        localStorage.setItem("authUser", JSON.stringify(authUser));
+        closeModal();
+        updateAuthUI();
+    } catch (err) {
+        showAuthError("register-error", err.message);
+    }
+}
+
+function logout() {
+    authToken = null;
+    authUser = null;
+    localStorage.removeItem("authToken");
+    localStorage.removeItem("authUser");
+    updateAuthUI();
+}
+
+// ── Application History ──────────────────────────────────────
+async function loadHistory() {
+    if (!authToken) return;
+    try {
+        const resp = await fetch("/applications", {
+            headers: { "Authorization": `Bearer ${authToken}` },
+        });
+        if (!resp.ok) return;
+        const apps = await resp.json();
+
+        let section = document.getElementById("history-section");
+        if (!section) {
+            section = document.createElement("div");
+            section.id = "history-section";
+            section.className = "history-section";
+            document.getElementById("results-panel").appendChild(section);
+        }
+
+        if (apps.length === 0) {
+            section.innerHTML = `<h3>Your Applications</h3><p style="font-size:0.85rem;color:var(--text-muted);">No applications yet. Submit one above!</p>`;
+            return;
+        }
+
+        let html = `<h3>Your Applications (${apps.length})</h3>`;
+        apps.forEach(app => {
+            const date = new Date(app.created_at).toLocaleDateString();
+            const cls = app.decision === "Approved" ? "approved" : "rejected";
+            html += `
+                <div class="history-item">
+                    <div>
+                        <span class="history-decision ${cls}">${app.decision}</span>
+                        <span class="history-meta" style="margin-left:8px;">Score: ${app.credit_score}</span>
+                    </div>
+                    <span class="history-meta">${date}</span>
+                </div>`;
+        });
+        section.innerHTML = html;
+    } catch (e) {
+        // silently fail
+    }
+}
+
+// ── Main App ─────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
+    updateAuthUI();
+
     const form = document.getElementById("approval-form");
 
     // ── Toggle button groups ─────────────────────────────────
@@ -11,13 +160,12 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 
-    // ── Auto-sync children → family members ──────────────────
+    // ── Auto-sync children -> family members ──────────────────
     const childrenInput = document.getElementById("children");
     const familyInput = document.getElementById("family_members");
     childrenInput.addEventListener("input", () => {
         const kids = parseInt(childrenInput.value) || 0;
         const current = parseInt(familyInput.value) || 1;
-        // At minimum: applicant + children
         if (current < kids + 1) {
             familyInput.value = kids + 1;
         }
@@ -90,9 +238,14 @@ document.addEventListener("DOMContentLoaded", () => {
         btn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> Evaluating...`;
 
         try {
+            const headers = { "Content-Type": "application/json" };
+            if (authToken) {
+                headers["Authorization"] = `Bearer ${authToken}`;
+            }
+
             const resp = await fetch("/predict", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers,
                 body: JSON.stringify(payload),
             });
 
@@ -103,6 +256,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
             const result = await resp.json();
             displayResults(result);
+
+            // Refresh history if logged in
+            if (authToken) loadHistory();
         } catch (err) {
             showError("Error: " + err.message);
         } finally {
@@ -116,7 +272,6 @@ document.addEventListener("DOMContentLoaded", () => {
         const content = document.getElementById("results-content");
         placeholder.style.display = "none";
         content.style.display = "block";
-        // Re-trigger animation
         content.style.animation = "none";
         content.offsetHeight; // reflow
         content.style.animation = "";

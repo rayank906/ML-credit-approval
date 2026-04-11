@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Optional
 
 _BACKEND_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _BACKEND_DIR.parent
@@ -16,13 +17,21 @@ for _path in (_BACKEND_DIR, _REPO_ROOT):
 
 import joblib  # noqa: E402
 import pandas as pd  # noqa: E402
-from fastapi import FastAPI, HTTPException, Request  # noqa: E402
+from fastapi import Depends, FastAPI, HTTPException, Request  # noqa: E402
 from fastapi.exceptions import RequestValidationError  # noqa: E402
 from fastapi.responses import HTMLResponse, JSONResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
+from sqlalchemy.orm import Session  # noqa: E402
 from starlette.templating import Jinja2Templates  # noqa: E402
 
+from auth import (  # noqa: E402
+    create_access_token,
+    decode_token,
+    hash_password,
+    verify_password,
+)
 from credit_score import compute_credit_score  # noqa: E402
+from database import Application, User, get_db, init_db  # noqa: E402
 from decision import blend_risk, get_decision_strength, get_top_reasons  # noqa: E402
 from features import (  # noqa: E402
     EDUCATION_TYPES,
@@ -32,7 +41,17 @@ from features import (  # noqa: E402
     INCOME_TYPES,
     OCCUPATION_TYPES,
 )
-from schemas import DecisionStrength, PredictRequest, PredictResponse, TopFactor  # noqa: E402
+from schemas import (  # noqa: E402
+    ApplicationResponse,
+    AuthResponse,
+    DecisionStrength,
+    LoginRequest,
+    PredictRequest,
+    PredictResponse,
+    RegisterRequest,
+    TopFactor,
+    UserResponse,
+)
 
 _MODEL_PATH = _REPO_ROOT / "model" / "credit_approval_model.joblib"
 
@@ -45,6 +64,44 @@ app.mount(
     StaticFiles(directory=str(_BACKEND_DIR / "static")),
     name="static",
 )
+
+# Create database tables on startup
+init_db()
+
+
+# ── Helpers ───────────────────────────────────────────────────
+
+
+def get_current_user(request: Request, db: Session = Depends(get_db)) -> Optional[User]:
+    """Extract the logged-in user from the Authorization header (optional)."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return None
+    token = auth_header[7:]
+    payload = decode_token(token)
+    if payload is None:
+        return None
+    user = db.query(User).filter(User.email == payload.get("sub")).first()
+    return user
+
+
+def require_user(request: Request, db: Session = Depends(get_db)) -> User:
+    """Dependency that requires a valid logged-in user."""
+    user = get_current_user(request, db)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return user
+
+
+def require_admin(request: Request, db: Session = Depends(get_db)) -> User:
+    """Dependency that requires an admin user."""
+    user = require_user(request, db)
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+# ── Exception handlers ────────────────────────────────────────
 
 
 @app.exception_handler(RequestValidationError)
@@ -62,6 +119,16 @@ async def request_validation_exception_handler(
     return JSONResponse(status_code=400, content={"error": f"Invalid input: {detail}"})
 
 
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    if isinstance(exc.detail, str):
+        return JSONResponse(status_code=exc.status_code, content={"error": exc.detail})
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+# ── Pages ─────────────────────────────────────────────────────
+
+
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
@@ -77,8 +144,57 @@ def index(request: Request) -> HTMLResponse:
     )
 
 
+# ── Auth endpoints ────────────────────────────────────────────
+
+
+@app.post("/auth/register", response_model=AuthResponse)
+def register(body: RegisterRequest, db: Session = Depends(get_db)) -> AuthResponse:
+    existing = db.query(User).filter(User.email == body.email).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Email already registered")
+
+    user = User(
+        email=body.email,
+        password_hash=hash_password(body.password),
+        full_name=body.full_name,
+        role="customer",
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    token = create_access_token({"sub": user.email, "role": user.role})
+    return AuthResponse(
+        token=token, email=user.email, full_name=user.full_name, role=user.role
+    )
+
+
+@app.post("/auth/login", response_model=AuthResponse)
+def login(body: LoginRequest, db: Session = Depends(get_db)) -> AuthResponse:
+    user = db.query(User).filter(User.email == body.email).first()
+    if not user or not verify_password(body.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    token = create_access_token({"sub": user.email, "role": user.role})
+    return AuthResponse(
+        token=token, email=user.email, full_name=user.full_name, role=user.role
+    )
+
+
+@app.get("/auth/me", response_model=UserResponse)
+def me(user: User = Depends(require_user)) -> UserResponse:
+    return UserResponse(email=user.email, full_name=user.full_name, role=user.role)
+
+
+# ── Prediction ────────────────────────────────────────────────
+
+
 @app.post("/predict", response_model=PredictResponse)
-def predict(body: PredictRequest) -> PredictResponse:
+def predict(
+    body: PredictRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> PredictResponse:
     try:
         features = {
             "CODE_GENDER": int(body.gender),
@@ -111,6 +227,36 @@ def predict(body: PredictRequest) -> PredictResponse:
     strength = get_decision_strength(blended_prob_unsafe)
     reasons = get_top_reasons(model, features)
 
+    # Save application to DB if user is logged in
+    user = get_current_user(request, db)
+    if user is not None:
+        application = Application(
+            user_id=user.id,
+            gender=body.gender,
+            own_car=body.own_car,
+            own_realty=body.own_realty,
+            children=body.children,
+            income=body.income,
+            income_type=body.income_type,
+            education=body.education,
+            family_status=body.family_status,
+            housing=body.housing,
+            occupation=body.occupation,
+            work_phone=body.work_phone,
+            phone=body.phone,
+            email_flag=body.email,
+            family_members=body.family_members,
+            age=body.age,
+            years_employed=body.years_employed,
+            decision=decision,
+            credit_score=int(credit_score),
+            probability_risky=round(blended_prob_unsafe * 100, 1),
+            probability_safe=round((1 - blended_prob_unsafe) * 100, 1),
+            model_probability_risky=round(prob_unsafe * 100, 1),
+        )
+        db.add(application)
+        db.commit()
+
     return PredictResponse(
         decision=decision,
         credit_score=int(credit_score),
@@ -122,11 +268,53 @@ def predict(body: PredictRequest) -> PredictResponse:
     )
 
 
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
-    if isinstance(exc.detail, str):
-        return JSONResponse(status_code=exc.status_code, content={"error": exc.detail})
-    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+# ── Application History ───────────────────────────────────────
+
+
+@app.get("/applications", response_model=list[ApplicationResponse])
+def get_my_applications(user: User = Depends(require_user), db: Session = Depends(get_db)):
+    apps = (
+        db.query(Application)
+        .filter(Application.user_id == user.id)
+        .order_by(Application.created_at.desc())
+        .all()
+    )
+    return [
+        ApplicationResponse(
+            id=str(a.id),
+            decision=a.decision,
+            credit_score=a.credit_score,
+            probability_risky=a.probability_risky,
+            probability_safe=a.probability_safe,
+            income=a.income,
+            age=a.age,
+            created_at=a.created_at,
+        )
+        for a in apps
+    ]
+
+
+@app.get("/admin/applications", response_model=list[ApplicationResponse])
+def get_all_applications(admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    apps = (
+        db.query(Application)
+        .order_by(Application.created_at.desc())
+        .limit(100)
+        .all()
+    )
+    return [
+        ApplicationResponse(
+            id=str(a.id),
+            decision=a.decision,
+            credit_score=a.credit_score,
+            probability_risky=a.probability_risky,
+            probability_safe=a.probability_safe,
+            income=a.income,
+            age=a.age,
+            created_at=a.created_at,
+        )
+        for a in apps
+    ]
 
 
 if __name__ == "__main__":

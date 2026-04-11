@@ -1,6 +1,40 @@
 """Pydantic request/response models for the HTTP API."""
 
-from pydantic import BaseModel, Field
+from __future__ import annotations
+
+from datetime import datetime
+
+from pydantic import BaseModel, EmailStr, Field
+
+
+# ── Auth ──────────────────────────────────────────────────────
+
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=6)
+    full_name: str = Field(..., min_length=1)
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class AuthResponse(BaseModel):
+    token: str
+    email: str
+    full_name: str
+    role: str
+
+
+class UserResponse(BaseModel):
+    email: str
+    full_name: str
+    role: str
+
+
+# ── Predict ───────────────────────────────────────────────────
 
 
 class PredictRequest(BaseModel):
@@ -43,3 +77,17 @@ class PredictResponse(BaseModel):
     model_probability_risky: float
     strength: DecisionStrength
     top_factors: list[TopFactor]
+
+
+# ── Application History ───────────────────────────────────────
+
+
+class ApplicationResponse(BaseModel):
+    id: str
+    decision: str
+    credit_score: int
+    probability_risky: float
+    probability_safe: float
+    income: float
+    age: float
+    created_at: datetime

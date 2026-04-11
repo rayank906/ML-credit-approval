@@ -9,7 +9,7 @@
 <body>
     <div class="container">
         <!-- Header -->
-        <header>
+        <header style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
             <div class="logo">
                 <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
@@ -20,7 +20,56 @@
                     <p class="subtitle">AI-Powered Decision Engine</p>
                 </div>
             </div>
+            <div class="auth-bar" id="auth-bar">
+                <button class="auth-btn" id="login-btn" onclick="openModal('login')">Log In</button>
+                <button class="auth-btn primary" id="register-btn" onclick="openModal('register')">Sign Up</button>
+            </div>
         </header>
+
+        <!-- Auth Modal -->
+        <div class="modal-overlay" id="auth-modal">
+            <div class="modal">
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+
+                <!-- Login Form -->
+                <div id="login-form">
+                    <h2>Welcome Back</h2>
+                    <p class="modal-subtitle">Log in to save and track your applications.</p>
+                    <div class="auth-error" id="login-error"></div>
+                    <div class="form-group">
+                        <label for="login-email">Email</label>
+                        <input type="email" id="login-email" placeholder="you@example.com">
+                    </div>
+                    <div class="form-group">
+                        <label for="login-password">Password</label>
+                        <input type="password" id="login-password" placeholder="Your password">
+                    </div>
+                    <button class="auth-submit" onclick="handleLogin()">Log In</button>
+                    <p class="auth-switch">Don't have an account? <a onclick="switchModal('register')">Sign up</a></p>
+                </div>
+
+                <!-- Register Form -->
+                <div id="register-form" style="display:none;">
+                    <h2>Create Account</h2>
+                    <p class="modal-subtitle">Sign up to save your applications and view history.</p>
+                    <div class="auth-error" id="register-error"></div>
+                    <div class="form-group">
+                        <label for="register-name">Full Name</label>
+                        <input type="text" id="register-name" placeholder="John Doe">
+                    </div>
+                    <div class="form-group">
+                        <label for="register-email">Email</label>
+                        <input type="email" id="register-email" placeholder="you@example.com">
+                    </div>
+                    <div class="form-group">
+                        <label for="register-password">Password</label>
+                        <input type="password" id="register-password" placeholder="Min 6 characters">
+                    </div>
+                    <button class="auth-submit" onclick="handleRegister()">Create Account</button>
+                    <p class="auth-switch">Already have an account? <a onclick="switchModal('login')">Log in</a></p>
+                </div>
+            </div>
+        </div>
 
         <div class="main-layout">
             <!-- Form Panel -->

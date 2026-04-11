@@ -3,6 +3,14 @@ fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 jinja2>=3.1.0
 
+# Database & Auth
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0
+python-dotenv>=1.0.0
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.0
+bcrypt==4.0.1
+
 # Model & data (match training stack)
 pandas
 numpy
