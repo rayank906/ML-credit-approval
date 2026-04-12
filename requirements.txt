@@ -2,6 +2,7 @@
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 jinja2>=3.1.0
+email-validator>=2.0.0
 
 # Database & Auth
 sqlalchemy>=2.0.0

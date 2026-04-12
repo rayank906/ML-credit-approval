@@ -3,290 +3,559 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Credit Card Approval — Decision Engine</title>
+    <title>Credit Card Approval — Bank Management Platform</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
 </head>
 <body>
+    <!-- Toast container -->
+    <div id="toast-container" class="toast-container"></div>
+
     <div class="container">
         <!-- Header -->
-        <header style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
-            <div class="logo">
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
-                    <line x1="1" y1="10" x2="23" y2="10"/>
-                </svg>
-                <div>
-                    <h1>Credit Card Approval</h1>
-                    <p class="subtitle">AI-Powered Decision Engine</p>
+        <header>
+            <div class="header-left">
+                <div class="logo">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
+                        <line x1="1" y1="10" x2="23" y2="10"/>
+                    </svg>
+                    <div>
+                        <h1>Credit Card Approval</h1>
+                        <p class="subtitle">AI-Powered Bank Management Platform</p>
+                    </div>
                 </div>
             </div>
-            <div class="auth-bar" id="auth-bar">
-                <button class="auth-btn" id="login-btn" onclick="openModal('login')">Log In</button>
-                <button class="auth-btn primary" id="register-btn" onclick="openModal('register')">Sign Up</button>
+            <div class="header-right">
+                <!-- Notification bell -->
+                <div class="notif-wrapper" id="notif-wrapper" style="display:none;">
+                    <button class="notif-bell" id="notif-bell" onclick="toggleNotifDropdown()">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                        <span class="notif-badge" id="notif-badge" style="display:none;">0</span>
+                    </button>
+                    <div class="notif-dropdown" id="notif-dropdown">
+                        <div class="notif-dropdown-header">
+                            <strong>Notifications</strong>
+                            <button class="notif-mark-read" onclick="markAllRead()">Mark all read</button>
+                        </div>
+                        <div class="notif-list" id="notif-list">
+                            <div class="empty-state"><p>No notifications</p></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="auth-bar" id="auth-bar">
+                    <button type="button" class="auth-btn" data-open-modal="login">Log In</button>
+                    <button type="button" class="auth-btn primary" data-open-modal="register">Sign Up</button>
+                </div>
             </div>
         </header>
 
-        <!-- Auth Modal -->
+        <!-- Landing (shown when logged out — pick Customer vs Bank staff) -->
+        <section class="landing-page" id="view-landing" aria-label="Welcome">
+            <div class="landing-inner">
+                <p class="landing-kicker">AI-powered credit evaluation</p>
+                <h2 class="landing-title">Welcome to Credit Card Approval</h2>
+                <p class="landing-lead">Sign in or create an account to track applications, save drafts, and get notifications. Bank staff use issued credentials. Admin accounts can be created with a bank enrollment code.</p>
+                <div class="landing-cards">
+                    <article class="landing-card">
+                        <div class="landing-card-icon customer" aria-hidden="true">
+                            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                        </div>
+                        <h3>Customer</h3>
+                        <p>Create an account or sign in to submit applications, use the simulator, and view your history.</p>
+                        <div class="landing-card-actions">
+                            <button type="button" class="auth-btn primary" id="landing-customer-register" data-open-modal="register">Create account</button>
+                            <button type="button" class="auth-btn" id="landing-customer-login" data-open-modal="login" data-auth-audience="customer">Sign in</button>
+                        </div>
+                    </article>
+                    <article class="landing-card landing-card-staff">
+                        <div class="landing-card-icon staff" aria-hidden="true">
+                            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                        </div>
+                        <h3>Bank staff</h3>
+                        <p>Officers and admins: sign in to review the queue, audit logs, and user management (admins).</p>
+                        <div class="landing-card-actions">
+                            <button type="button" class="auth-btn primary" id="landing-staff-login" data-open-modal="login" data-auth-audience="staff">Staff sign in</button>
+                        </div>
+                    </article>
+                </div>
+            </div>
+        </section>
+
+        <!-- Auth modal MUST be outside #main-shell — when logged out, main-shell is display:none and would hide the modal -->
         <div class="modal-overlay" id="auth-modal">
             <div class="modal">
-                <button class="modal-close" onclick="closeModal()">&times;</button>
-
-                <!-- Login Form -->
+                <button type="button" class="modal-close" onclick="closeModal()">&times;</button>
                 <div id="login-form">
-                    <h2>Welcome Back</h2>
-                    <p class="modal-subtitle">Log in to save and track your applications.</p>
+                    <h2 id="login-title">Welcome back</h2>
+                    <p class="modal-subtitle" id="login-subtitle">Log in to save and track your applications.</p>
                     <div class="auth-error" id="login-error"></div>
-                    <div class="form-group">
-                        <label for="login-email">Email</label>
-                        <input type="email" id="login-email" placeholder="you@example.com">
-                    </div>
-                    <div class="form-group">
-                        <label for="login-password">Password</label>
-                        <input type="password" id="login-password" placeholder="Your password">
-                    </div>
-                    <button class="auth-submit" onclick="handleLogin()">Log In</button>
-                    <p class="auth-switch">Don't have an account? <a onclick="switchModal('register')">Sign up</a></p>
+                    <div class="form-group"><label for="login-email">Email</label>
+                        <input type="email" id="login-email" placeholder="you@example.com" autocomplete="username"></div>
+                    <div class="form-group"><label for="login-password">Password</label>
+                        <input type="password" id="login-password" placeholder="Your password" autocomplete="current-password"></div>
+                    <button type="button" class="auth-submit" onclick="handleLogin()">Log In</button>
+                    <p class="auth-switch" id="login-auth-switch-customer">Need an account? <button type="button" class="link-btn" onclick="switchModal('register')">Create one</button></p>
+                    <p class="auth-switch auth-switch-muted" id="login-auth-switch-staff" style="display:none;">Bank-issued credentials only. If you need staff access, request credentials from your administrator.</p>
                 </div>
-
-                <!-- Register Form -->
                 <div id="register-form" style="display:none;">
-                    <h2>Create Account</h2>
-                    <p class="modal-subtitle">Sign up to save your applications and view history.</p>
+                    <h2 id="register-title">Create account</h2>
+                    <p class="modal-subtitle" id="register-subtitle">Choose an account type to get started.</p>
                     <div class="auth-error" id="register-error"></div>
                     <div class="form-group">
-                        <label for="register-name">Full Name</label>
-                        <input type="text" id="register-name" placeholder="John Doe">
+                        <label>Account Type</label>
+                        <div class="toggle-group" id="register-role-toggle" data-field="register_role">
+                            <button type="button" class="toggle-btn active" data-value="customer">Customer</button>
+                            <button type="button" class="toggle-btn" data-value="admin">Admin</button>
+                        </div>
+                        <p class="help-text">Admin accounts require a bank enrollment code.</p>
                     </div>
-                    <div class="form-group">
-                        <label for="register-email">Email</label>
-                        <input type="email" id="register-email" placeholder="you@example.com">
+                    <div class="form-group"><label for="register-name">Full Name</label>
+                        <input type="text" id="register-name" placeholder="John Doe" autocomplete="name"></div>
+                    <div class="form-group"><label for="register-email">Email</label>
+                        <input type="email" id="register-email" placeholder="you@example.com" autocomplete="email"></div>
+                    <div class="form-group"><label for="register-password">Password</label>
+                        <input type="password" id="register-password" placeholder="Min 6 characters" autocomplete="new-password"></div>
+                    <div class="form-group" id="register-admin-code-wrap" style="display:none;">
+                        <label for="register-admin-code">Admin Enrollment Code</label>
+                        <input type="password" id="register-admin-code" placeholder="Provided by the bank">
                     </div>
-                    <div class="form-group">
-                        <label for="register-password">Password</label>
-                        <input type="password" id="register-password" placeholder="Min 6 characters">
-                    </div>
-                    <button class="auth-submit" onclick="handleRegister()">Create Account</button>
-                    <p class="auth-switch">Already have an account? <a onclick="switchModal('login')">Log in</a></p>
+                    <button type="button" class="auth-submit" onclick="handleRegister()">Create Account</button>
+                    <p class="auth-switch">Already have an account? <button type="button" class="link-btn" onclick="switchModal('login')">Log in</button></p>
                 </div>
             </div>
         </div>
 
+        <div id="main-shell" class="main-shell hidden">
+        <!-- Detail slide-out panel -->
+        <div class="slideout-overlay" id="detail-overlay" onclick="closeDetail()"></div>
+        <div class="slideout-panel" id="detail-panel">
+            <div class="slideout-header">
+                <h2>Application Detail</h2>
+                <button class="modal-close" onclick="closeDetail()">&times;</button>
+            </div>
+            <div class="slideout-body" id="detail-body"></div>
+        </div>
+
+        <div class="shell-layout">
+            <aside class="side-nav" id="side-nav" aria-label="Primary navigation">
+                <div class="side-nav-header">
+                    <div class="side-nav-kicker">Workspace</div>
+                    <div class="side-nav-title" id="side-nav-title">—</div>
+                    <div class="side-nav-sub" id="side-nav-sub">—</div>
+                </div>
+                <div class="side-nav-section" id="side-nav-main"></div>
+                <div class="side-nav-section side-nav-section-muted" id="side-nav-secondary"></div>
+            </aside>
+
+            <main class="shell-main" id="shell-main" aria-label="Content">
+
+        <!-- ════════════════ VIEW: APPLY ════════════════ -->
+        <div class="view-panel" id="view-apply" data-view-panel="apply">
         <div class="main-layout">
-            <!-- Form Panel -->
             <div class="form-panel">
+                <!-- Draft controls -->
+                <div class="draft-bar" id="draft-bar" style="display:none;">
+                    <div class="draft-bar-left">
+                        <select id="draft-select" onchange="loadSelectedDraft()">
+                            <option value="">Load a draft...</option>
+                        </select>
+                    </div>
+                    <div class="draft-bar-right">
+                        <button class="auth-btn small" onclick="saveDraft()">Save Draft</button>
+                        <button class="auth-btn small danger" id="delete-draft-btn" onclick="deleteCurrentDraft()" style="display:none;">Delete</button>
+                    </div>
+                </div>
                 <form id="approval-form">
-                    <!-- Section: Personal Info -->
                     <div class="form-section">
                         <h2 class="section-title">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                             Personal Information
                         </h2>
                         <div class="form-grid">
-                            <div class="form-group">
-                                <label>Gender</label>
+                            <div class="form-group"><label>Gender</label>
                                 <div class="toggle-group" data-field="gender">
                                     <button type="button" class="toggle-btn" data-value="0">Male</button>
                                     <button type="button" class="toggle-btn" data-value="1">Female</button>
-                                </div>
-                            </div>
-                            <div class="form-group">
-                                <label for="age">Age</label>
-                                <div class="input-with-unit">
-                                    <input type="number" id="age" name="age" min="18" max="70" step="1" placeholder="35" required>
-                                    <span class="unit">years</span>
-                                </div>
-                            </div>
-                            <div class="form-group">
-                                <label for="family_status">Family Status</label>
-                                <select id="family_status" name="family_status" required>
-                                    <option value="" disabled selected>Select status</option>
-                                    {% for key, val in family_status.items() %}
-                                    <option value="{{ key }}">{{ val }}</option>
-                                    {% endfor %}
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label for="children">Number of Children</label>
-                                <input type="number" id="children" name="children" min="0" max="19" value="0" required>
-                            </div>
-                            <div class="form-group">
-                                <label for="family_members">Total Family Members</label>
-                                <input type="number" id="family_members" name="family_members" min="1" max="20" value="1" required>
-                            </div>
-                            <div class="form-group">
-                                <label for="education">Education Level</label>
-                                <select id="education" name="education" required>
-                                    <option value="" disabled selected>Select education</option>
-                                    {% for key, val in education_types.items() %}
-                                    <option value="{{ key }}">{{ val }}</option>
-                                    {% endfor %}
-                                </select>
-                            </div>
+                                </div></div>
+                            <div class="form-group"><label for="age">Age</label>
+                                <div class="input-with-unit"><input type="number" id="age" name="age" min="18" max="70" step="1" placeholder="35" required><span class="unit">years</span></div></div>
+                            <div class="form-group"><label for="family_status">Family Status</label>
+                                <select id="family_status" name="family_status" required><option value="" disabled selected>Select status</option>
+                                {% for key, val in family_status.items() %}<option value="{{ key }}">{{ val }}</option>{% endfor %}</select></div>
+                            <div class="form-group"><label for="children">Number of Children</label>
+                                <input type="number" id="children" name="children" min="0" max="19" value="0" required></div>
+                            <div class="form-group"><label for="family_members">Total Family Members</label>
+                                <input type="number" id="family_members" name="family_members" min="1" max="20" value="1" required></div>
+                            <div class="form-group"><label for="education">Education Level</label>
+                                <select id="education" name="education" required><option value="" disabled selected>Select education</option>
+                                {% for key, val in education_types.items() %}<option value="{{ key }}">{{ val }}</option>{% endfor %}</select></div>
                         </div>
                     </div>
-
-                    <!-- Section: Employment & Income -->
                     <div class="form-section">
                         <h2 class="section-title">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
                             Employment & Income
                         </h2>
                         <div class="form-grid">
-                            <div class="form-group">
-                                <label for="income_type">Income Source</label>
-                                <select id="income_type" name="income_type" required>
-                                    <option value="" disabled selected>Select source</option>
-                                    {% for key, val in income_types.items() %}
-                                    <option value="{{ key }}">{{ val }}</option>
-                                    {% endfor %}
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label for="income">Annual Income</label>
-                                <div class="input-with-unit">
-                                    <span class="unit prefix">$</span>
-                                    <input type="number" id="income" name="income" min="10000" max="2000000" step="1000" placeholder="75,000" required class="has-prefix">
-                                </div>
-                            </div>
-                            <div class="form-group">
-                                <label for="occupation">Occupation</label>
-                                <select id="occupation" name="occupation" required>
-                                    <option value="" disabled selected>Select occupation</option>
-                                    {% for key, val in occupation_types.items() %}
-                                    <option value="{{ key }}">{{ val }}</option>
-                                    {% endfor %}
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label for="years_employed">Years at Current Job</label>
-                                <div class="input-with-unit">
-                                    <input type="number" id="years_employed" name="years_employed" min="0" max="50" step="0.5" placeholder="5" required>
-                                    <span class="unit">years</span>
-                                </div>
-                            </div>
+                            <div class="form-group"><label for="income_type">Income Source</label>
+                                <select id="income_type" name="income_type" required><option value="" disabled selected>Select source</option>
+                                {% for key, val in income_types.items() %}<option value="{{ key }}">{{ val }}</option>{% endfor %}</select></div>
+                            <div class="form-group"><label for="income">Annual Income</label>
+                                <div class="input-with-unit"><span class="unit prefix">$</span><input type="number" id="income" name="income" min="10000" max="2000000" step="1000" placeholder="75,000" required class="has-prefix"></div></div>
+                            <div class="form-group"><label for="occupation">Occupation</label>
+                                <select id="occupation" name="occupation" required><option value="" disabled selected>Select occupation</option>
+                                {% for key, val in occupation_types.items() %}<option value="{{ key }}">{{ val }}</option>{% endfor %}</select></div>
+                            <div class="form-group"><label for="years_employed">Years at Current Job</label>
+                                <div class="input-with-unit"><input type="number" id="years_employed" name="years_employed" min="0" max="50" step="0.5" placeholder="5" required><span class="unit">years</span></div></div>
                         </div>
                     </div>
-
-                    <!-- Section: Assets & Contact -->
                     <div class="form-section">
                         <h2 class="section-title">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
                             Assets & Contact
                         </h2>
                         <div class="form-grid">
-                            <div class="form-group">
-                                <label>Own a Car?</label>
-                                <div class="toggle-group" data-field="own_car">
-                                    <button type="button" class="toggle-btn" data-value="1">Yes</button>
-                                    <button type="button" class="toggle-btn" data-value="0">No</button>
-                                </div>
-                            </div>
-                            <div class="form-group">
-                                <label>Own Property?</label>
-                                <div class="toggle-group" data-field="own_realty">
-                                    <button type="button" class="toggle-btn" data-value="1">Yes</button>
-                                    <button type="button" class="toggle-btn" data-value="0">No</button>
-                                </div>
-                            </div>
-                            <div class="form-group">
-                                <label for="housing">Housing Type</label>
-                                <select id="housing" name="housing" required>
-                                    <option value="" disabled selected>Select housing</option>
-                                    {% for key, val in housing_types.items() %}
-                                    <option value="{{ key }}">{{ val }}</option>
-                                    {% endfor %}
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label>Has Work Phone?</label>
-                                <div class="toggle-group" data-field="work_phone">
-                                    <button type="button" class="toggle-btn" data-value="1">Yes</button>
-                                    <button type="button" class="toggle-btn" data-value="0">No</button>
-                                </div>
-                            </div>
-                            <div class="form-group">
-                                <label>Has Home Phone?</label>
-                                <div class="toggle-group" data-field="phone">
-                                    <button type="button" class="toggle-btn" data-value="1">Yes</button>
-                                    <button type="button" class="toggle-btn" data-value="0">No</button>
-                                </div>
-                            </div>
-                            <div class="form-group">
-                                <label>Has Email?</label>
-                                <div class="toggle-group" data-field="email">
-                                    <button type="button" class="toggle-btn" data-value="1">Yes</button>
-                                    <button type="button" class="toggle-btn" data-value="0">No</button>
-                                </div>
-                            </div>
+                            <div class="form-group"><label>Own a Car?</label>
+                                <div class="toggle-group" data-field="own_car"><button type="button" class="toggle-btn" data-value="1">Yes</button><button type="button" class="toggle-btn" data-value="0">No</button></div></div>
+                            <div class="form-group"><label>Own Property?</label>
+                                <div class="toggle-group" data-field="own_realty"><button type="button" class="toggle-btn" data-value="1">Yes</button><button type="button" class="toggle-btn" data-value="0">No</button></div></div>
+                            <div class="form-group"><label for="housing">Housing Type</label>
+                                <select id="housing" name="housing" required><option value="" disabled selected>Select housing</option>
+                                {% for key, val in housing_types.items() %}<option value="{{ key }}">{{ val }}</option>{% endfor %}</select></div>
+                            <div class="form-group"><label>Has Work Phone?</label>
+                                <div class="toggle-group" data-field="work_phone"><button type="button" class="toggle-btn" data-value="1">Yes</button><button type="button" class="toggle-btn" data-value="0">No</button></div></div>
+                            <div class="form-group"><label>Has Home Phone?</label>
+                                <div class="toggle-group" data-field="phone"><button type="button" class="toggle-btn" data-value="1">Yes</button><button type="button" class="toggle-btn" data-value="0">No</button></div></div>
+                            <div class="form-group"><label>Has Email?</label>
+                                <div class="toggle-group" data-field="email"><button type="button" class="toggle-btn" data-value="1">Yes</button><button type="button" class="toggle-btn" data-value="0">No</button></div></div>
                         </div>
                     </div>
-
                     <button type="submit" class="submit-btn" id="submit-btn">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
                         Evaluate Application
                     </button>
                 </form>
             </div>
-
-            <!-- Results Panel -->
             <div class="results-panel" id="results-panel">
                 <div class="results-placeholder" id="results-placeholder">
-                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                        <polyline points="14 2 14 8 20 8"/>
-                        <line x1="16" y1="13" x2="8" y2="13"/>
-                        <line x1="16" y1="17" x2="8" y2="17"/>
-                        <polyline points="10 9 9 9 8 9"/>
-                    </svg>
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
                     <p>Fill out the application and click<br><strong>"Evaluate Application"</strong> to see results</p>
                 </div>
-
                 <div class="results-content" id="results-content" style="display:none;">
-                    <!-- Decision Banner -->
                     <div class="decision-banner" id="decision-banner">
                         <div class="decision-icon" id="decision-icon"></div>
                         <h2 class="decision-text" id="decision-text"></h2>
                         <p class="decision-strength" id="decision-strength"></p>
                     </div>
-
-                    <!-- Probability Gauge -->
+                    <div class="prob-top">
+                        <div class="prob-stats">
+                            <div class="prob-stat safe"><span class="prob-value" id="prob-safe">—</span><span class="prob-label">Approval Likelihood</span></div>
+                            <div class="prob-stat risky"><span class="prob-value" id="prob-risky">—</span><span class="prob-label">Risk Score</span></div>
+                        </div>
+                    </div>
+                    <!-- Credit score display -->
+                    <div class="credit-score-section" id="credit-score-section">
+                        <h3>Credit Score</h3>
+                        <div class="credit-score-display">
+                            <div class="credit-score-ring" id="credit-score-ring">
+                                <span class="credit-score-number" id="credit-score-number">—</span>
+                                <span class="credit-score-range">300 – 850</span>
+                            </div>
+                        </div>
+                        <!-- Credit breakdown -->
+                        <div class="credit-breakdown" id="credit-breakdown"></div>
+                    </div>
                     <div class="gauge-section">
                         <h3>Risk Assessment</h3>
-                        <div class="gauge-bar">
-                            <div class="gauge-fill" id="gauge-fill"></div>
-                            <div class="gauge-marker" id="gauge-marker"></div>
-                        </div>
-                        <div class="gauge-labels">
-                            <span class="safe-label">Low Risk</span>
-                            <span class="risk-label">High Risk</span>
-                        </div>
-                        <div class="prob-stats">
-                            <div class="prob-stat safe">
-                                <span class="prob-value" id="prob-safe">—</span>
-                                <span class="prob-label">Approval Likelihood</span>
-                            </div>
-                            <div class="prob-stat risky">
-                                <span class="prob-value" id="prob-risky">—</span>
-                                <span class="prob-label">Risk Score</span>
-                            </div>
-                        </div>
+                        <div class="gauge-bar"><div class="gauge-fill" id="gauge-fill"></div><div class="gauge-marker" id="gauge-marker"></div></div>
+                        <div class="gauge-labels"><span class="safe-label">Low Risk</span><span class="risk-label">High Risk</span></div>
                     </div>
-
-                    <!-- Top Factors -->
                     <div class="factors-section">
                         <h3>Top Decision Factors</h3>
-                        <p class="factors-description">These features had the most influence on the model's decision overall.</p>
+                        <p class="factors-description">These features had the most influence on the model's decision.</p>
                         <div class="factors-list" id="factors-list"></div>
                     </div>
+                    <!-- Risk tips -->
+                    <div class="tips-section" id="tips-section" style="display:none;">
+                        <h3>How to Improve</h3>
+                        <div id="tips-list" class="tips-list"></div>
+                    </div>
                 </div>
+            </div>
+        </div>
+        </div>
+
+        <!-- ════════════════ VIEW: WHAT-IF SIMULATOR ════════════════ -->
+        <div class="view-panel hidden" id="view-whatif" data-view-panel="whatif">
+        <div class="main-layout">
+            <div class="form-panel">
+                <div class="whatif-header">
+                    <h2 class="section-title" style="margin-bottom:4px;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
+                        What-If Simulator
+                    </h2>
+                    <p class="whatif-desc">Adjust inputs and see predictions update in real time. No application is submitted.</p>
+                </div>
+                <div class="panel-card whatif-load-card">
+                    <div class="whatif-load-row">
+                        <div class="whatif-load-left">
+                            <div class="whatif-load-title">Load From Previous Application</div>
+                            <div class="whatif-load-sub">Pick one of your submitted applications, then tweak the numbers.</div>
+                        </div>
+                        <div class="whatif-load-right">
+                            <select id="wi-load-app-select" class="filter-select" aria-label="Previous applications">
+                                <option value="">No previous applications</option>
+                            </select>
+                            <button class="auth-btn small primary" type="button" onclick="loadWhatIfFromSelected()">Load</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-section">
+                    <div class="form-grid">
+                        <div class="form-group"><label>Gender</label>
+                            <div class="toggle-group whatif-input" data-field="wi_gender">
+                                <button type="button" class="toggle-btn active" data-value="0">Male</button>
+                                <button type="button" class="toggle-btn" data-value="1">Female</button>
+                            </div></div>
+                        <div class="form-group"><label>Age</label>
+                            <div class="input-with-unit"><input type="number" class="whatif-input" id="wi_age" min="18" max="70" step="1" value="35"><span class="unit">years</span></div></div>
+                        <div class="form-group"><label>Family Status</label>
+                            <select class="whatif-input" id="wi_family_status">
+                                {% for key, val in family_status.items() %}<option value="{{ key }}">{{ val }}</option>{% endfor %}
+                            </select></div>
+                        <div class="form-group"><label>Children</label>
+                            <input type="number" class="whatif-input" id="wi_children" min="0" max="19" value="0"></div>
+                        <div class="form-group"><label>Family Members</label>
+                            <input type="number" class="whatif-input" id="wi_family_members" min="1" max="20" value="2"></div>
+                        <div class="form-group"><label>Education</label>
+                            <select class="whatif-input" id="wi_education">
+                                {% for key, val in education_types.items() %}<option value="{{ key }}">{{ val }}</option>{% endfor %}
+                            </select></div>
+                        <div class="form-group"><label>Income Source</label>
+                            <select class="whatif-input" id="wi_income_type">
+                                {% for key, val in income_types.items() %}<option value="{{ key }}">{{ val }}</option>{% endfor %}
+                            </select></div>
+                        <div class="form-group"><label>Annual Income</label>
+                            <div class="input-with-unit"><span class="unit prefix">$</span><input type="number" class="whatif-input has-prefix" id="wi_income" min="10000" max="2000000" step="5000" value="75000"></div></div>
+                        <div class="form-group"><label>Occupation</label>
+                            <select class="whatif-input" id="wi_occupation">
+                                {% for key, val in occupation_types.items() %}<option value="{{ key }}">{{ val }}</option>{% endfor %}
+                            </select></div>
+                        <div class="form-group"><label>Years Employed</label>
+                            <div class="input-with-unit"><input type="number" class="whatif-input" id="wi_years_employed" min="0" max="50" step="0.5" value="5"><span class="unit">years</span></div></div>
+                        <div class="form-group"><label>Own a Car?</label>
+                            <div class="toggle-group whatif-input" data-field="wi_own_car"><button type="button" class="toggle-btn active" data-value="1">Yes</button><button type="button" class="toggle-btn" data-value="0">No</button></div></div>
+                        <div class="form-group"><label>Own Property?</label>
+                            <div class="toggle-group whatif-input" data-field="wi_own_realty"><button type="button" class="toggle-btn active" data-value="1">Yes</button><button type="button" class="toggle-btn" data-value="0">No</button></div></div>
+                        <div class="form-group"><label>Housing</label>
+                            <select class="whatif-input" id="wi_housing">
+                                {% for key, val in housing_types.items() %}<option value="{{ key }}">{{ val }}</option>{% endfor %}
+                            </select></div>
+                        <div class="form-group"><label>Work Phone?</label>
+                            <div class="toggle-group whatif-input" data-field="wi_work_phone"><button type="button" class="toggle-btn active" data-value="1">Yes</button><button type="button" class="toggle-btn" data-value="0">No</button></div></div>
+                        <div class="form-group"><label>Home Phone?</label>
+                            <div class="toggle-group whatif-input" data-field="wi_phone"><button type="button" class="toggle-btn" data-value="1">Yes</button><button type="button" class="toggle-btn active" data-value="0">No</button></div></div>
+                        <div class="form-group"><label>Has Email?</label>
+                            <div class="toggle-group whatif-input" data-field="wi_email"><button type="button" class="toggle-btn active" data-value="1">Yes</button><button type="button" class="toggle-btn" data-value="0">No</button></div></div>
+                    </div>
+                </div>
+            </div>
+            <!-- What-If live results -->
+            <div class="results-panel whatif-results" id="whatif-results">
+                <div class="whatif-live-badge">LIVE PREVIEW</div>
+                <div class="decision-banner" id="wi-decision-banner">
+                    <div class="decision-icon" id="wi-decision-icon">—</div>
+                    <h2 class="decision-text" id="wi-decision-text">Adjust inputs</h2>
+                    <p class="decision-strength" id="wi-decision-strength">Change values on the left to see a prediction</p>
+                </div>
+                <div class="prob-top">
+                    <div class="prob-stats">
+                        <div class="prob-stat safe"><span class="prob-value" id="wi-prob-safe">—</span><span class="prob-label">Approval Likelihood</span></div>
+                        <div class="prob-stat risky"><span class="prob-value" id="wi-prob-risky">—</span><span class="prob-label">Risk Score</span></div>
+                    </div>
+                </div>
+                <div class="credit-score-section">
+                    <h3>Credit Score</h3>
+                    <div class="credit-score-display">
+                        <div class="credit-score-ring" id="wi-credit-score-ring">
+                            <span class="credit-score-number" id="wi-credit-score-number">—</span>
+                            <span class="credit-score-range">300 – 850</span>
+                        </div>
+                    </div>
+                    <div class="credit-breakdown" id="wi-credit-breakdown"></div>
+                </div>
+                <div class="gauge-section">
+                    <h3>Risk Assessment</h3>
+                    <div class="gauge-bar"><div class="gauge-fill" id="wi-gauge-fill"></div><div class="gauge-marker" id="wi-gauge-marker" style="left:50%"></div></div>
+                    <div class="gauge-labels"><span class="safe-label">Low Risk</span><span class="risk-label">High Risk</span></div>
+                </div>
+                <div class="factors-section">
+                    <h3>Top Decision Factors</h3>
+                    <div class="factors-list" id="wi-factors-list"></div>
+                </div>
+                <div class="tips-section" id="wi-tips-section" style="display:none;">
+                    <h3>How to Improve</h3>
+                    <div id="wi-tips-list" class="tips-list"></div>
+                </div>
+            </div>
+        </div>
+        </div>
+
+        <!-- ════════════════ VIEW: DASHBOARD ════════════════ -->
+        <div class="view-panel hidden" id="view-dashboard" data-view-panel="dashboard">
+            <div class="dashboard-page">
+                <div class="panel-card dashboard-hero-card">
+                    <h2 class="panel-title" id="dashboard-title">Dashboard</h2>
+                    <p class="panel-sub" id="dashboard-sub">Your application overview.</p>
+                    <div class="stats-grid" id="dashboard-stats"></div>
+                </div>
+                <div class="dashboard-lower" id="dashboard-lower">
+                    <div class="panel-card dashboard-side-card">
+                        <h3 class="dashboard-section-title">Quick actions</h3>
+                        <p class="panel-sub dashboard-section-sub" id="dashboard-actions-sub">Jump to a task</p>
+                        <div class="quick-actions" id="dashboard-quick-actions"></div>
+                    </div>
+                    <div class="panel-card dashboard-side-card">
+                        <h3 class="dashboard-section-title" id="dashboard-secondary-title">Recent activity</h3>
+                        <p class="panel-sub dashboard-section-sub" id="dashboard-secondary-sub"></p>
+                        <div id="dashboard-secondary-body"></div>
+                    </div>
+                    <div class="panel-card dashboard-side-card" id="dashboard-tertiary-wrap">
+                        <h3 class="dashboard-section-title" id="dashboard-tertiary-title">Notifications</h3>
+                        <p class="panel-sub dashboard-section-sub" id="dashboard-tertiary-sub">Latest updates for your account</p>
+                        <div id="dashboard-tertiary-body"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ════════════════ VIEW: MY APPLICATIONS ════════════════ -->
+        <div class="view-panel hidden" id="view-history" data-view-panel="history">
+            <div class="panel-card">
+                <h2 class="panel-title">History</h2>
+                <p class="panel-sub">Your submitted evaluations and outcomes. Click a row for full details.</p>
+                <div id="history-list" class="history-list-standalone"></div>
+            </div>
+        </div>
+
+        <!-- ════════════════ VIEW: DRAFTS ════════════════ -->
+        <div class="view-panel hidden" id="view-drafts" data-view-panel="drafts">
+            <div class="panel-card" style="max-width:700px;">
+                <h2 class="panel-title">Saved Drafts</h2>
+                <p class="panel-sub">Your in-progress applications. Click to continue editing.</p>
+                <div id="drafts-list"></div>
+            </div>
+        </div>
+
+        <!-- ════════════════ VIEW: PROFILE ════════════════ -->
+        <div class="view-panel hidden" id="view-profile" data-view-panel="profile">
+            <div class="panel-card" style="max-width:500px;">
+                <h2 class="panel-title">Profile Settings</h2>
+                <p class="panel-sub">Manage your account.</p>
+                <div class="profile-section">
+                    <h3 class="mini-heading">Account Info</h3>
+                    <div class="profile-field"><span class="profile-label">Email</span><span id="profile-email" class="profile-value">—</span></div>
+                    <div class="profile-field"><span class="profile-label">Role</span><span id="profile-role" class="profile-value">—</span></div>
+                    <div class="profile-field"><span class="profile-label">Member since</span><span id="profile-since" class="profile-value">—</span></div>
+                </div>
+                <div class="profile-section">
+                    <h3 class="mini-heading">Update Name</h3>
+                    <div class="form-group"><label for="profile-name">Full Name</label>
+                        <input type="text" id="profile-name" placeholder="Your name"></div>
+                    <button class="auth-submit" style="margin-top:8px;" onclick="saveName()">Save Name</button>
+                </div>
+                <div class="profile-section">
+                    <h3 class="mini-heading">Change Password</h3>
+                    <div class="form-group"><label for="pw-current">Current Password</label>
+                        <input type="password" id="pw-current" placeholder="Current"></div>
+                    <div class="form-group"><label for="pw-new">New Password</label>
+                        <input type="password" id="pw-new" placeholder="Min 6 characters"></div>
+                    <button class="auth-submit" style="margin-top:8px;" onclick="changePassword()">Update Password</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ════════════════ VIEW: BANK QUEUE (staff) ════════════════ -->
+        <div class="view-panel hidden" id="view-bank" data-view-panel="bank">
+            <div class="panel-card" style="max-width:1100px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
+                    <div>
+                        <h2 class="panel-title" style="margin:0;">Applications</h2>
+                        <p class="panel-sub" style="margin:0;">All customer applications and outcomes. Click a row for full detail and overrides.</p>
+                    </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                        <button class="auth-btn small" onclick="exportCSV()">Export CSV</button>
+                    </div>
+                </div>
+                <!-- Filters -->
+                <div class="filter-bar">
+                    <input type="text" id="bank-search" placeholder="Search name or email..." class="filter-input">
+                    <select id="bank-filter-decision" class="filter-select">
+                        <option value="">All decisions</option>
+                        <option value="Approved">Approved</option>
+                        <option value="Rejected">Rejected</option>
+                        <option value="under_review">Under Review</option>
+                    </select>
+                    <select id="bank-filter-flagged" class="filter-select">
+                        <option value="">All flags</option>
+                        <option value="true">Flagged only</option>
+                        <option value="false">Not flagged</option>
+                    </select>
+                    <select id="bank-filter-confidence" class="filter-select">
+                        <option value="">All confidence</option>
+                        <option value="true">Low confidence only</option>
+                    </select>
+                    <button class="auth-btn small primary" onclick="loadBankQueue()">Apply</button>
+                </div>
+                <div id="bank-queue-msg" class="bank-msg"></div>
+                <div class="table-wrap" id="bank-table-wrap"></div>
+            </div>
+        </div>
+
+        <!-- ════════════════ VIEW: FAIRNESS (staff) ════════════════ -->
+        <div class="view-panel hidden" id="view-fairness" data-view-panel="fairness">
+            <div class="panel-card" style="max-width:1100px;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;">
+                    <div>
+                        <h2 class="panel-title" style="margin:0;">Fairness & Bias</h2>
+                        <p class="panel-sub" style="margin:0;">Approval-rate correlations across demographics in the application dataset.</p>
+                    </div>
+                    <button class="auth-btn small primary" onclick="loadFairness()">Refresh</button>
+                </div>
+                <div id="fairness-meta" class="fairness-meta"></div>
+                <div id="fairness-container" class="fairness-grid"></div>
+            </div>
+        </div>
+
+        <!-- ════════════════ VIEW: USERS (admin) ════════════════ -->
+        <div class="view-panel hidden" id="view-users" data-view-panel="users">
+            <div class="panel-card" style="max-width:900px;">
+                <h2 class="panel-title">User Management</h2>
+                <p class="panel-sub">Manage all registered users. Change roles or deactivate accounts.</p>
+                <div class="table-wrap" id="users-table-wrap"></div>
+            </div>
+        </div>
+
+        <!-- ════════════════ VIEW: AUDIT LOG (staff) ════════════════ -->
+        <div class="view-panel hidden" id="view-audit" data-view-panel="audit">
+            <div class="panel-card" style="max-width:1000px;">
+                <h2 class="panel-title">Audit Log</h2>
+                <p class="panel-sub">All staff actions — overrides, flags, and status changes.</p>
+                <div class="table-wrap" id="audit-table-wrap"></div>
             </div>
         </div>
 
         <footer>
             <p>Powered by a Random Forest model trained on historical credit data. For educational purposes only.</p>
         </footer>
+            </main>
+        </div><!-- /shell-layout -->
+        </div><!-- /main-shell -->
     </div>
 
-    <script src="{{ url_for('static', path='app.js') }}"></script>
+    <script src="{{ url_for('static', path='app.js') }}?v=7"></script>
 </body>
 </html>

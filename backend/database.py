@@ -8,23 +8,23 @@ from datetime import datetime
 
 from dotenv import load_dotenv
 from sqlalchemy import (
+    Boolean,
     Column,
     DateTime,
     Float,
     ForeignKey,
     Integer,
     String,
+    Text,
     create_engine,
-    text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Transaction pooler (PgBouncer) doesn't support prepared statements
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
@@ -45,7 +45,8 @@ class User(Base):
     email = Column(String, unique=True, nullable=False)
     password_hash = Column(String, nullable=False)
     full_name = Column(String, nullable=False)
-    role = Column(String, nullable=False, default="customer")  # "customer" or "admin"
+    role = Column(String, nullable=False, default="customer")
+    is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -55,7 +56,7 @@ class Application(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
 
-    # ── Input fields ──
+    # Input fields
     gender = Column(Integer)
     own_car = Column(Integer)
     own_realty = Column(Integer)
@@ -73,13 +74,55 @@ class Application(Base):
     age = Column(Float)
     years_employed = Column(Float)
 
-    # ── Prediction results ──
+    # Prediction results
     decision = Column(String)
     credit_score = Column(Integer)
     probability_risky = Column(Float)
     probability_safe = Column(Float)
     model_probability_risky = Column(Float)
+    confidence_score = Column(Float, nullable=True)
+    credit_breakdown = Column(JSON, nullable=True)
 
+    # Status tracking
+    status = Column(String, nullable=False, default="auto_approved")
+    flagged = Column(Boolean, nullable=False, default=False)
+    flag_reason = Column(String, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Draft(Base):
+    __tablename__ = "drafts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    form_data = Column(JSON, nullable=False)
+    name = Column(String, nullable=False, default="Untitled Draft")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    message = Column(String, nullable=False)
+    type = Column(String, nullable=False, default="info")  # info, success, warning
+    read = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    application_id = Column(UUID(as_uuid=True), ForeignKey("applications.id"), nullable=False)
+    staff_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    action = Column(String, nullable=False)
+    old_status = Column(String, nullable=True)
+    new_status = Column(String, nullable=True)
+    note = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -87,7 +130,6 @@ class Application(Base):
 
 
 def init_db() -> None:
-    """Create all tables if they don't already exist."""
     try:
         Base.metadata.create_all(bind=engine)
     except Exception as e:
@@ -95,7 +137,6 @@ def init_db() -> None:
 
 
 def get_db():
-    """FastAPI dependency that yields a DB session."""
     db = SessionLocal()
     try:
         yield db
