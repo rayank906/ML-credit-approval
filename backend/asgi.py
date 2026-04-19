@@ -6,13 +6,15 @@ Full-stack FastAPI application with customer + admin experiences.
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
+import json
 import logging
 import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 _BACKEND_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _BACKEND_DIR.parent
@@ -20,39 +22,37 @@ for _path in (_BACKEND_DIR, _REPO_ROOT):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
-import joblib  # noqa: E402
-import pandas as pd  # noqa: E402
 from fastapi import Depends, FastAPI, HTTPException, Query, Request  # noqa: E402
 from fastapi.exceptions import RequestValidationError  # noqa: E402
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
+try:
+    from redis.asyncio import Redis  # type: ignore  # noqa: E402
+    from redis.exceptions import RedisError  # type: ignore  # noqa: E402
+
+    _REDIS_IMPORT_ERROR: ModuleNotFoundError | None = None
+except ModuleNotFoundError as e:  # pragma: no cover
+    Redis = Any  # type: ignore[misc,assignment]
+
+    class RedisError(Exception):
+        pass
+
+    _REDIS_IMPORT_ERROR = e
 from sqlalchemy import func  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 from starlette.templating import Jinja2Templates  # noqa: E402
 
 from auth import create_access_token, decode_token, hash_password, verify_password  # noqa: E402
-from credit_score import (  # noqa: E402
-    _score_age,
-    _score_children,
-    _score_education,
-    _score_employment,
-    _score_family_members,
-    _score_housing,
-    _score_income,
-    _score_income_type,
-    _score_occupation,
-    compute_credit_score,
-)
-from database import Application, AuditLog, Draft, Notification, User, get_db, init_db  # noqa: E402
-from decision import blend_risk, get_decision_strength, get_top_reasons  # noqa: E402
+from database import Application, AuditLog, Draft, Job, Notification, User, get_db, init_db  # noqa: E402
+from decision import get_top_reasons  # noqa: E402
 from features import (  # noqa: E402
     EDUCATION_TYPES,
     FAMILY_STATUS,
-    FEATURE_ORDER,
     HOUSING_TYPES,
     INCOME_TYPES,
     OCCUPATION_TYPES,
 )
+from prediction import model, run_prediction  # noqa: E402
 from schemas import (  # noqa: E402
     ApplicationDetail,
     ApplicationSummary,
@@ -68,6 +68,9 @@ from schemas import (  # noqa: E402
     FairnessMetric,
     FairnessResponse,
     FlagRequest,
+    JobStatusResponse,
+    JobSubmitRequest,
+    JobSubmitResponse,
     LoginRequest,
     NotificationResponse,
     OverrideRequest,
@@ -84,9 +87,6 @@ from schemas import (  # noqa: E402
     WhatIfResponse,
 )
 
-_MODEL_PATH = _REPO_ROOT / "model" / "credit_approval_model.joblib"
-model = joblib.load(_MODEL_PATH)
-
 templates = Jinja2Templates(directory=str(_BACKEND_DIR / "templates"))
 app = FastAPI(title="Credit Card Approval", version="3.0.0")
 app.mount("/static", StaticFiles(directory=str(_BACKEND_DIR / "static")), name="static")
@@ -98,6 +98,57 @@ logger = logging.getLogger("backend.asgi")
 STAFF_ROLES = frozenset({"admin", "officer"})
 RATE_LIMIT_PER_DAY = 20
 CONFIDENCE_LOW_THRESHOLD = 65.0
+
+JOB_QUEUE_NAME = os.environ.get("JOB_QUEUE_NAME", "ml_jobs")
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+JOB_POST_LIMIT_PER_MIN = int(os.environ.get("JOB_POST_LIMIT_PER_MIN", "30"))
+JOB_GET_LIMIT_PER_MIN = int(os.environ.get("JOB_GET_LIMIT_PER_MIN", "120"))
+
+_redis: Redis | None = None
+
+
+def get_redis() -> Redis:
+    if _REDIS_IMPORT_ERROR is not None:
+        raise HTTPException(
+            status_code=503,
+            detail="Redis is not installed. Install with: pip install redis (or: pip install -r requirements.txt).",
+        )
+    global _redis
+    if _redis is None:
+        _redis = Redis.from_url(REDIS_URL, decode_responses=True)
+    return _redis
+
+
+@app.on_event("shutdown")
+async def _shutdown() -> None:
+    global _redis
+    if _redis is not None:
+        await _redis.aclose()
+        _redis = None
+
+
+def _stable_json_dumps(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _compute_job_input_hash(*, user_id: str, payload: dict[str, object]) -> str:
+    canonical = _stable_json_dumps(payload)
+    return hashlib.sha256(f"{user_id}:{canonical}".encode("utf-8")).hexdigest()
+
+
+async def _enforce_rate_limit(*, user: User, request: Request, op: str, limit: int) -> None:
+    redis = get_redis()
+    client_ip = request.client.host if request.client else "unknown"
+    key = f"rl:jobs:{op}:{user.id}:{client_ip}"
+    try:
+        count = await redis.incr(key)
+        if count == 1:
+            await redis.expire(key, 60)
+    except RedisError as e:
+        logger.warning("Rate limiter unavailable", extra={"key": key}, exc_info=e)
+        return
+    if count > limit:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please retry later.")
 
 
 # ── Auth helpers ──────────────────────────────────────────────
@@ -139,106 +190,6 @@ def require_admin(request: Request, db: Session = Depends(get_db)) -> User:
 def create_notification(db: Session, user_id, message: str, ntype: str = "info"):
     n = Notification(user_id=user_id, message=message, type=ntype)
     db.add(n)
-
-
-# ── Prediction helpers ────────────────────────────────────────
-
-
-def _compute_credit_breakdown(features: dict) -> list[dict]:
-    """Decompose credit score into individual factor contributions."""
-    items = [
-        ("Income", _score_income(float(features.get("AMT_INCOME_TOTAL", 0)))),
-        ("Age", _score_age(float(features.get("AGE_YEARS", 0)))),
-        ("Employment Stability", _score_employment(float(features.get("YEARS_EMPLOYED", 0)))),
-        ("Property Ownership", 30 if int(features.get("FLAG_OWN_REALTY", 0)) == 1 else 0),
-        ("Car Ownership", 10 if int(features.get("FLAG_OWN_CAR", 0)) == 1 else 0),
-        ("Children", _score_children(int(features.get("CNT_CHILDREN", 0)))),
-        ("Family Size", _score_family_members(int(features.get("CNT_FAM_MEMBERS", 0)))),
-        ("Education", _score_education(int(features.get("NAME_EDUCATION_TYPE", 1)))),
-        ("Income Type", _score_income_type(int(features.get("NAME_INCOME_TYPE", 0)))),
-        ("Housing", _score_housing(int(features.get("NAME_HOUSING_TYPE", 0)))),
-        ("Occupation", _score_occupation(int(features.get("OCCUPATION_TYPE", 18)))),
-    ]
-    return [
-        {"factor": name, "points": pts, "direction": "positive" if pts > 0 else ("negative" if pts < 0 else "neutral")}
-        for name, pts in items
-    ]
-
-
-def _compute_confidence(prob_unsafe: float) -> float:
-    """
-    Confidence = how far from 50/50 the model is.
-    At 0% or 100% risk → 100% confidence. At 50% → 0% confidence.
-    """
-    return round(abs(prob_unsafe - 0.5) * 200, 1)
-
-
-def _generate_risk_tips(features: dict, credit_score: int, prob_risky: float) -> list[str]:
-    """Generate actionable, personalized improvement tips."""
-    tips = []
-    income = float(features.get("AMT_INCOME_TOTAL", 0))
-    years = float(features.get("YEARS_EMPLOYED", 0))
-    realty = int(features.get("FLAG_OWN_REALTY", 0))
-    car = int(features.get("FLAG_OWN_CAR", 0))
-    children = int(features.get("CNT_CHILDREN", 0))
-    education = int(features.get("NAME_EDUCATION_TYPE", 1))
-
-    if income < 100000:
-        target = 100000
-        score_gain = _score_income(target) - _score_income(income)
-        if score_gain > 0:
-            tips.append(f"Increasing annual income to ${target:,} could add ~{score_gain} points to your credit score.")
-    if years < 3:
-        score_gain = _score_employment(5) - _score_employment(years)
-        if score_gain > 0:
-            tips.append(f"Staying at your current job for {3 - years:.0f}+ more years could add ~{score_gain} points.")
-    if realty == 0:
-        tips.append("Owning property adds +30 points to your credit score — consider this if feasible.")
-    if car == 0:
-        tips.append("Car ownership adds +10 points to your credit score.")
-    if children > 2:
-        tips.append("A high number of dependents slightly reduces your score (−20 points).")
-    if education < 3:
-        score_gain = _score_education(3) - _score_education(education)
-        if score_gain > 0:
-            tips.append(f"Higher education (degree) could add ~{score_gain} points to your profile.")
-    if credit_score < 600:
-        tips.append("Your credit score is below average (600). Focus on income stability and reducing obligations.")
-    if not tips:
-        tips.append("Your profile is already strong. Maintain income stability and employment tenure.")
-    return tips
-
-
-def _run_prediction(body):
-    """Core prediction logic, shared by /predict and /whatif."""
-    features = {
-        "CODE_GENDER": int(body.gender), "FLAG_OWN_CAR": int(body.own_car),
-        "FLAG_OWN_REALTY": int(body.own_realty), "CNT_CHILDREN": int(body.children),
-        "AMT_INCOME_TOTAL": float(body.income), "NAME_INCOME_TYPE": int(body.income_type),
-        "NAME_EDUCATION_TYPE": int(body.education), "NAME_FAMILY_STATUS": int(body.family_status),
-        "NAME_HOUSING_TYPE": int(body.housing), "OCCUPATION_TYPE": int(body.occupation),
-        "FLAG_WORK_PHONE": int(body.work_phone), "FLAG_PHONE": int(body.phone),
-        "FLAG_EMAIL": int(body.email), "CNT_FAM_MEMBERS": int(body.family_members),
-        "AGE_YEARS": float(body.age), "YEARS_EMPLOYED": float(body.years_employed),
-    }
-    credit_score = compute_credit_score(features)
-    features["CREDIT_SCORE"] = credit_score
-    X = pd.DataFrame([features], columns=FEATURE_ORDER)
-    prob_unsafe = float(model.predict_proba(X)[:, 1][0])
-    blended = blend_risk(prob_unsafe, credit_score)
-    decision = "Rejected" if blended >= 0.4 else "Approved"
-    confidence = _compute_confidence(blended)
-    strength = get_decision_strength(blended)
-    reasons = get_top_reasons(model, features)
-    breakdown = _compute_credit_breakdown(features)
-    tips = _generate_risk_tips(features, credit_score, blended)
-    return {
-        "features": features, "credit_score": credit_score,
-        "prob_unsafe": prob_unsafe, "blended": blended,
-        "decision": decision, "confidence": confidence,
-        "strength": strength, "reasons": reasons,
-        "breakdown": breakdown, "tips": tips,
-    }
 
 
 # ── Exception handlers ────────────────────────────────────────
@@ -363,7 +314,7 @@ def predict(body: PredictRequest, request: Request, db: Session = Depends(get_db
             raise HTTPException(status_code=429, detail=f"Rate limit exceeded. Max {RATE_LIMIT_PER_DAY} applications per day.")
 
     try:
-        r = _run_prediction(body)
+        r = run_prediction(body.model_dump())
     except (TypeError, ValueError) as e:
         raise HTTPException(status_code=400, detail=f"Invalid input: {e}") from e
 
@@ -410,7 +361,7 @@ def predict(body: PredictRequest, request: Request, db: Session = Depends(get_db
 @app.post("/whatif", response_model=WhatIfResponse)
 def whatif(body: WhatIfRequest):
     try:
-        r = _run_prediction(body)
+        r = run_prediction(body.model_dump())
     except (TypeError, ValueError) as e:
         raise HTTPException(status_code=400, detail=f"Invalid input: {e}") from e
     return WhatIfResponse(
@@ -555,6 +506,89 @@ def delete_draft(draft_id: str, user: User = Depends(require_user), db: Session 
     db.delete(draft)
     db.commit()
     return {"ok": True}
+
+
+# ── Jobs (Redis queue) ────────────────────────────────────────
+
+
+async def _try_enqueue_job(*, job_id: str) -> bool:
+    try:
+        await get_redis().rpush(JOB_QUEUE_NAME, job_id)
+        return True
+    except RedisError as e:
+        logger.error("Failed to enqueue job", extra={"job_id": job_id, "queue": JOB_QUEUE_NAME}, exc_info=e)
+        return False
+
+
+@app.post("/job", response_model=JobSubmitResponse)
+async def submit_job(
+    body: JobSubmitRequest,
+    request: Request,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> JobSubmitResponse:
+    await _enforce_rate_limit(user=user, request=request, op="post", limit=JOB_POST_LIMIT_PER_MIN)
+
+    payload_dict = body.payload.model_dump()
+    input_hash = _compute_job_input_hash(user_id=str(user.id), payload=payload_dict)
+
+    existing = db.query(Job).filter(Job.user_id == user.id, Job.input_hash == input_hash).first()
+    if existing is not None:
+        if existing.status == "enqueue_failed":
+            if await _try_enqueue_job(job_id=str(existing.id)):
+                existing.status = "queued"
+                db.commit()
+                db.refresh(existing)
+        return JobSubmitResponse(job_id=str(existing.id), status=existing.status, deduped=True)
+
+    job = Job(user_id=user.id, input_hash=input_hash, status="queued", request=payload_dict)
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    if not await _try_enqueue_job(job_id=str(job.id)):
+        job.status = "enqueue_failed"
+        db.commit()
+        db.refresh(job)
+
+    return JobSubmitResponse(job_id=str(job.id), status=job.status, deduped=False)
+
+
+@app.get("/job", response_model=JobStatusResponse)
+async def get_job(
+    request: Request,
+    job_id: str = Query(...),
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> JobStatusResponse:
+    await _enforce_rate_limit(user=user, request=request, op="get", limit=JOB_GET_LIMIT_PER_MIN)
+    job = db.query(Job).filter(Job.id == job_id, Job.user_id == user.id).first()
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return JobStatusResponse(
+        job_id=str(job.id),
+        status=job.status,
+        result=job.result,
+        error=job.error,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+    )
+
+
+@app.get("/job/{job_id}", response_model=JobStatusResponse)
+async def get_job_by_path(job_id: str, request: Request, user: User = Depends(require_user), db: Session = Depends(get_db)) -> JobStatusResponse:
+    await _enforce_rate_limit(user=user, request=request, op="get", limit=JOB_GET_LIMIT_PER_MIN)
+    job = db.query(Job).filter(Job.id == job_id, Job.user_id == user.id).first()
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return JobStatusResponse(
+        job_id=str(job.id),
+        status=job.status,
+        result=job.result,
+        error=job.error,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+    )
 
 
 # ── Notifications ─────────────────────────────────────────────

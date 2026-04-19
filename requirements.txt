@@ -11,6 +11,7 @@ python-dotenv>=1.0.0
 python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.0
 bcrypt==4.0.1
+redis>=5.0.0
 
 # Model & data (match training stack)
 pandas

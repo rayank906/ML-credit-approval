@@ -2,13 +2,16 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+# Install python dependencies (use repo root requirements.txt)
+COPY requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+# Copy only what the FastAPI app needs at runtime
+COPY backend ./backend
+COPY model ./model
+COPY credit_score.py ./credit_score.py
 
-RUN python -c "from app import create_app; create_app()"
+ENV PORT=8000
+EXPOSE 8000
 
-EXPOSE 5000
-
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--timeout", "120", "wsgi:app"]
+CMD ["uvicorn", "backend.asgi:app", "--host", "0.0.0.0", "--port", "8000"]

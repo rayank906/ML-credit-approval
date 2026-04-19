@@ -113,6 +113,28 @@ class PredictResponse(BaseModel):
     risk_tips: list[str]
 
 
+# ── Jobs (Redis queue) ────────────────────────────────────────
+
+
+class JobSubmitRequest(BaseModel):
+    payload: PredictRequest = Field(..., description="Prediction input; validated at submit time.")
+
+
+class JobSubmitResponse(BaseModel):
+    job_id: str
+    status: str
+    deduped: bool = Field(False, description="True when an identical job already existed.")
+
+
+class JobStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    result: Any | None = None
+    error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 # ── What-If Simulator ────────────────────────────────────────
 
 

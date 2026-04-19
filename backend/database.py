@@ -16,6 +16,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     create_engine,
 )
 from sqlalchemy.dialects.postgresql import JSON, UUID
@@ -124,6 +125,23 @@ class AuditLog(Base):
     new_status = Column(String, nullable=True)
     note = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Job(Base):
+    __tablename__ = "jobs"
+    __table_args__ = (UniqueConstraint("user_id", "input_hash", name="uq_jobs_user_input_hash"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    input_hash = Column(String, nullable=False)
+
+    status = Column(String, nullable=False, default="queued")  # queued|processing|succeeded|failed|enqueue_failed
+    request = Column(JSON, nullable=False)
+    result = Column(JSON, nullable=True)
+    error = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 # ── Helpers ───────────────────────────────────────────────────
